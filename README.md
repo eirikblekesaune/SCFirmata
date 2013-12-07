@@ -1,4 +1,4 @@
 SCFirmata
 =========
 
-Firmata implementation for SuperCollider.
+Firmata implementation for SuperCollider (in the making).

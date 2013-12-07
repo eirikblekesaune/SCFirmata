@@ -7,6 +7,7 @@ FirmataParser {
 	<setPinMode = 0xF4,
 	<protocolVersion = 0xF9,
 	<systemReset = 0xFF,
+
 	//sysex commands
 	<sysexStart = 0xF0,
 	<sysexEnd = 0xF7,
@@ -91,16 +92,21 @@ FirmataParser {
 		parseFunctions.at(state).value(byte);
 	}
 
-	parse14BitData{arg lsb, msb;
-		^lsb.bitAnd(127).bitOr(msb << 7);
+	//data bytes are sent in two 7bit bytes for sysex, analog,
+	parse14BitData{arg data;
+		var result;
+		data.pairsDo({arg lsb, msb;
+			result = result.add(lsb.bitAnd(127).bitOr(msb << 7));
+		});
+		^result;
 	}
 
 	parseSysexCommand{
 		switch(sysexData[0],
 			this.class.reportFirmware, {
-				var version, name = String.new;
+				var version, name;
 				version = sysexData.at([1,2]);
-				sysexData.copyRange(3, sysexData.size).clump(2).collect({arg item; name = name ++ this.parse14BitData(*item).asAscii});
+				name = String.newFrom(this.parse14BitData(sysexData.copyRange(3, sysexData.size)).collect(_.asAscii));
 				"Firmata protocol version: %.% Firmware: %".format(version[0], version[1], name).postln;
 			}
 		);

@@ -1,4 +1,4 @@
-FirmataParser {
+Firmata2 {
 	classvar
 	<analogIOMessage = 0xE0,
 	<digitalIOMessage = 0x90,
@@ -29,13 +29,9 @@ FirmataParser {
 	<samplingInterval = 0x7A, // sampling interval
 	<sysexNonRealtime = 0x7E, // MIDI Reserved for non-realtime messages
 	<sysexRealtime = 0x7F, // MIDI Reserved for realtime messages
-	<parserError = -1,
-	<pinMode;
-	var parseFunctions;
-	var state;
-	var device;
-	var commandData, sysexData;
-	var numcommandDataReceived = 0;
+	<parserError = -1;
+	classvar <pinMode;
+	classvar <pinDirection;
 
 	*initClass{
 		pinMode = (
@@ -45,7 +41,19 @@ FirmataParser {
 			PWM: 3,
 			SERVO: 4
 		);
+		pinDirection = (
+			IN: 0,
+			OUT: 1
+		)
 	}
+}
+FirmataParser {
+
+	var parseFunctions;
+	var state;
+	var device;
+	var commandData, sysexData;
+	var numcommandDataReceived = 0;
 
 	*new{arg device;
 		^super.new.init(device);
@@ -58,13 +66,14 @@ FirmataParser {
 		state = \waitingForCommand;
 		parseFunctions = (
 			waitingForCommand: {arg byte;
-				"got command:%\n".postf(byte.asHexString(2));
 				case
-				{byte == this.class.protocolVersion} { state = \waitingForProtocolVersionData; }
-				{byte == this.class.sysexStart} { state = \waitingForSysexData; };
+				{byte.bitAnd(0xF0) == Firmata2.analogIOMessage} {
+					state = \waitingForAnalogIOData; commandData.add(byte.bitXor(Firmata2.analogIOMessage)) }
+				{byte == Firmata2.protocolVersion} { state = \waitingForProtocolVersionData; }
+				{byte == Firmata2.sysexStart} { state = \waitingForSysexData; };
 			},
 			waitingForSysexData: {arg byte;
-				if(byte != this.class.sysexEnd,
+				if(byte != Firmata2.sysexEnd,
 					{ sysexData = sysexData.add(byte);},
 					{
 						this.parseSysexCommand;
@@ -77,6 +86,12 @@ FirmataParser {
 				switch(commandData.size,
 					0, { commandData.add(byte); },
 					1, { "Protocol version: %.%".format(commandData[0], byte).postln; this.reset; }
+				);
+			},
+			\waitingForAnalogIOData: {arg byte;
+				switch(commandData.size,
+					1, {commandData.add(byte);},
+					2, {device.analogPinAction.value(commandData[0], this.parse14BitData([commandData[1], byte])[0]); this.reset;}
 				);
 			}
 		);
@@ -103,7 +118,7 @@ FirmataParser {
 
 	parseSysexCommand{
 		switch(sysexData[0],
-			this.class.reportFirmware, {
+			Firmata2.reportFirmware, {
 				var version, name;
 				version = sysexData.at([1,2]);
 				name = String.newFrom(this.parse14BitData(sysexData.copyRange(3, sysexData.size)).collect(_.asAscii));
@@ -118,12 +133,13 @@ FirmataDevice {
 	var parser;
 	var listenRoutine;
 	var parserState;
+	var <>analogPinAction, <>digitalPinAction;
 
 	*new{arg portPath, baudrate = 57600;
 		^super.new.init(portPath, baudrate);
 	}
 	init{arg portPath_, baudrate_;
-		parser = FirmataParser.new;
+		parser = FirmataParser.new(this);
 		fork{
 			port = SerialPort(portPath_, baudrate_, crtscts: true);
 			//Wait for Arduino auto reset
@@ -142,4 +158,29 @@ FirmataDevice {
 
 	end{ listenRoutine.stop; }
 	close{ port.close; }
+
+	setPinMode{arg pinNum, direction;
+		var message;
+		direction = Firmata2.pinMode.atFail(direction, {"Not a pin mode in Firmata: %".format(direction).error; ^this});
+		message = Int8Array[Firmata2.setPinMode, pinNum, direction];
+		port.putAll(message);
+	}
+
+	setDigitalPortMask{arg portNum, mask;
+		var message;
+		message = Int8Array[(Firmata2.digitalIOMessage + portNum), mask.bitAnd(127), mask.rightShift(7)];
+		port.putAll(message);
+	}
+
+	reportAnalogPin{arg pinNum, bool;
+		port.putAll(Int8Array[Firmata2.reportAnalogPin + pinNum, bool.asInteger]);
+	}
+
+	reportDigitalPort{arg pinNum, bool;
+
+	}
+
+	sendSysexString{arg data;}
+	doSystemReset{}
+	getProtocolVersion{}
 }

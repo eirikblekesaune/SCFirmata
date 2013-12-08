@@ -1,8 +1,15 @@
 SerialPort.devices
 a = FirmataDevice('/dev/tty.usbmodem411');
+a.setPinMode(13, \OUTPUT);
 
+//set pin 13
+a.setDigitalPortMask(1, 2r0100000);//on
+a.setDigitalPortMask(1, 2r0000000);//off
 
-b = [ 121, 2, 3, 83, 0, 116, 0, 97, 0, 110, 0, 100, 0, 97, 0, 114, 0, 100, 0, 70, 0, 105, 0, 114, 0, 109, 0, 97, 0, 116, 0, 97, 0, 46, 0, 105, 0, 110, 0, 111, 0 ]
+//start listening to analog in
+a.reportAnalogPin(0, true);
+a.analogPinAction_({arg num, val;
+	[num, val].postln;
+})
 
-b.clump(2)
-
+a.reportAnalogPin(0, false);

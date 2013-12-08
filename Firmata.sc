@@ -3,7 +3,7 @@ Firmata2 {
 	<analogIOMessage = 0xE0,
 	<digitalIOMessage = 0x90,
 	<reportAnalogPin = 0xC0,
-	<reportDigitalPin = 0xD0,
+	<reportDigitalPort = 0xD0,
 	<setPinMode = 0xF4,
 	<protocolVersion = 0xF9,
 	<systemReset = 0xFF,
@@ -39,7 +39,9 @@ Firmata2 {
 			OUTPUT: 1,
 			ANALOG: 2,
 			PWM: 3,
-			SERVO: 4
+			SERVO: 4,
+			SHIFT: 5,
+			I2C: 6
 		);
 		pinDirection = (
 			IN: 0,
@@ -69,6 +71,8 @@ FirmataParser {
 				case
 				{byte.bitAnd(0xF0) == Firmata2.analogIOMessage} {
 					state = \waitingForAnalogIOData; commandData.add(byte.bitXor(Firmata2.analogIOMessage)) }
+				{byte.bitAnd(0xF0) == Firmata2.digitalIOMessage} {
+					state = \waitingForDigitalIOData; commandData.add(byte.bitXor(Firmata2.digitalIOMessage)) }
 				{byte == Firmata2.protocolVersion} { state = \waitingForProtocolVersionData; }
 				{byte == Firmata2.sysexStart} { state = \waitingForSysexData; };
 			},
@@ -93,6 +97,12 @@ FirmataParser {
 					1, {commandData.add(byte);},
 					2, {device.analogPinAction.value(commandData[0], this.parse14BitData([commandData[1], byte])[0]); this.reset;}
 				);
+			},
+			\waitingForDigitalIOData: {arg byte;
+				switch(commandData.size,
+					1, { commandData.add(byte); },
+					2, {device.digitalPortAction.value(commandData[0], this.parse14BitData([commandData[1], byte])[0]); this.reset;}
+				);
 			}
 		);
 	}
@@ -104,6 +114,7 @@ FirmataParser {
 
 	parseByte{arg byte;
 		var nextState;
+		//"GOT: % HEX: % ASCII: %\n".postf(byte, byte.asHexString(2), byte.asAscii);
 		parseFunctions.at(state).value(byte);
 	}
 
@@ -123,6 +134,31 @@ FirmataParser {
 				version = sysexData.at([1,2]);
 				name = String.newFrom(this.parse14BitData(sysexData.copyRange(3, sysexData.size)).collect(_.asAscii));
 				"Firmata protocol version: %.% Firmware: %".format(version[0], version[1], name).postln;
+			},
+			Firmata2.stringData, {
+				var str = String.newFrom(this.parse14BitData(sysexData.copyRange(1, sysexData.size - 1)).collect(_.asAscii));
+				"Sysex string received: %".format(str).postln;
+			},
+			Firmata2.capabilityResponse, {
+				var capabilityData, temp, result;
+				sysexData.drop(1).do({arg item;
+					if(item == 127,//pin capability data is separated by 127
+						{ capabilityData = capabilityData.add(temp); temp = nil;},
+						{ temp = temp.add(item); }
+					);
+				});
+				capabilityData = capabilityData.collect({arg item, i;
+					var result = ();
+					item.pairsDo({arg mode, resolution;
+						result.put(Firmata2.pinMode.findKeyForValue(mode).asSymbol, resolution);
+					});
+					result;
+				});
+				"Firmata device capability:".postln;
+				device.prSetPinCapabilities(capabilityData);
+			},
+			{
+				"Unknown Sysex command received: %".format(this.parse14BitData(sysexData)).postln;
 			}
 		);
 	}
@@ -133,7 +169,8 @@ FirmataDevice {
 	var parser;
 	var listenRoutine;
 	var parserState;
-	var <>analogPinAction, <>digitalPinAction;
+	var <>analogPinAction, <>digitalPortAction;
+	var <pinCapabilities;
 
 	*new{arg portPath, baudrate = 57600;
 		^super.new.init(portPath, baudrate);
@@ -176,11 +213,44 @@ FirmataDevice {
 		port.putAll(Int8Array[Firmata2.reportAnalogPin + pinNum, bool.asInteger]);
 	}
 
-	reportDigitalPort{arg pinNum, bool;
-
+	reportDigitalPort{arg portNum, bool;
+		port.putAll(Int8Array[Firmata2.reportDigitalPort + portNum, bool.asInteger]);
 	}
 
-	sendSysexString{arg data;}
-	doSystemReset{}
-	getProtocolVersion{}
+	serialize14BitData{arg data;
+		^data.collect({arg item;
+			[item.bitAnd(127), item << 7]
+		}).flat;
+	}
+
+	sendRawString{arg str;
+		var message = this.serialize14BitData(str.ascii).as(Int8Array);
+		message = message.insert(0, Firmata2.stringData);
+		this.prSendSysexData(message);
+	}
+
+	requestFirmware{ this.prSendSysexData(Firmata2.reportFirmware); }
+	requestProtocolVersion{ port.put(Firmata2.protocolVersion); }
+	doSystemReset{ port.put(Firmata2.systemReset); }
+	queryCapability{ this.prSendSysexData(Firmata2.capabilityQuery); }
+	numberOfPins{
+		if(pinCapabilities.isNil,
+			{ "No capability data exists for device. Query capability data first.".warn; ^this },
+			{ ^pinCapabilities.size; }
+		)
+	}
+
+
+	prSendSysexData{arg data;
+		var message;
+		message = data.asArray;
+		message = message.insert(message.size, Firmata2.sysexEnd);
+		message = message.insert(0, Firmata2.sysexStart);
+		port.putAll(message);
+	}
+
+	prSetPinCapabilities{arg data;
+		pinCapabilities = data;
+		this.changed(\pinCapabilities);
+	}
 }

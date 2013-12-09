@@ -110,15 +110,18 @@ FirmataParser {
 
 	//Functions are added to a FIFO
 	addResponseFunction{arg key, func;
-		responseFunctions.atFail(key.asSymbol, {
-			responseFunctions.put(key.asSymbol, Array.new);
-			responseFunctions.at(key.asSymbol);
-		}).addFirst(func);
+		var funcList;
+		funcList = responseFunctions.atFail(key.asSymbol, {FunctionList.new.array_(Array.new);});
+		funcList.array_(funcList.array.addFirst(func));
+		responseFunctions.put(key.asSymbol, funcList);
 	}
 
 	doResponseFunction{arg key ...args;
-		var funcs;
-		responseFunctions.at(key.asSymbol).pop.value(*args);
+		var funcList;
+		funcList = responseFunctions.at(key.asSymbol);
+		funcList !? {
+			funcList.array.pop.value(*args);
+		}
 	}
 
 	reset{
@@ -177,7 +180,8 @@ FirmataParser {
 					sysexData[3..].collect({arg byte, i; byte.bitAnd(127) << (7 * i)}).sum //state
 				];
 				"Pin state: %".format(pinStateData).postln;
-				this.doResponseFunction(Firmata2.pinStateResponse, *pinStateData);
+				this.doResponseFunction(\pinStateResponse, *pinStateData);
+				device.pinStateResponseAction.value(*pinStateData);
 			},
 			{
 				"Unknown sysex command received: %".format(this.parse14BitData(sysexData)).postln;
@@ -192,6 +196,7 @@ FirmataDevice {
 	var listenRoutine;
 	var parserState;
 	var <>analogPinAction, <>digitalPortAction;
+	var <>pinStateResponseAction;
 	var <pinCapabilities;
 
 	*new{arg portPath, baudrate = 57600;
@@ -257,7 +262,7 @@ FirmataDevice {
 	queryCapability{ this.prSendSysexData(Firmata2.capabilityQuery); }
 
 	queryPinState{arg pinNum, responseFunc;
-		responseFunc !? { parser.addResponseFunction(Firmata2.pinStateResponse, responseFunc); };
+		responseFunc !? { parser.addResponseFunction(\pinStateResponse, responseFunc); };
 		this.prSendSysexData(Int8Array[Firmata2.pinStateQuery, pinNum]);
 	}
 

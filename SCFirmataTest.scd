@@ -36,6 +36,31 @@ a.queryCapability;
 a.pinCapabilities;
 a.numberOfPins;
 
+//query pin states
+a.queryPinState(0);
+a.queryPinState(1);
+//can be used to verify messages to pins:
+a.setPinMode(13, \INPUT);
+a.queryPinState(13, nil);
+a.setPinMode(13, \OUTPUT);
+a.queryPinState(13);
+a.setDigitalPortMask(1, 2r0100000);//on
+a.queryPinState(13);
+a.setDigitalPortMask(1, 2r0000000);//off
+a.queryPinState(13, {arg ...args; "hei".postln;});
 
+//You can also issue a callback function for this query.
+//It works in the same way as an asynchronous /c_get call to scsynth
+a.queryPinState(0, {arg ...args; "My 0th pins state is: %".format(args).postln;});
+//These callbacks are queued and will be evaluated in the order they were issued.
+//You need to a small amount of delay between each request.
+(
+Routine({
+	20.do {arg i;
+		a.queryPinState(1, {arg ...args; "Request callback no. % : % [%]".format(i, args, 1.0.rand2).postln;});
+		0.01.wait;
+	}
+}).play;
+)
 //Test using firmware: EchoString.ino
 a.sendRawString("Kjempebra!");//Replies with the same string

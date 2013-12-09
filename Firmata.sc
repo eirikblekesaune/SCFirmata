@@ -55,7 +55,7 @@ FirmataParser {
 	var state;
 	var device;
 	var commandData, sysexData;
-	var numcommandDataReceived = 0;
+	var responseFunctions;
 
 	*new{arg device;
 		^super.new.init(device);
@@ -65,6 +65,7 @@ FirmataParser {
 		device = device_;
 		sysexData = Int8Array.new;//sysex can be any size
 		commandData = Int8Array.new(32);//max number of data bytes for Firmata is 32 for non-sysex commands
+		responseFunctions = IdentityDictionary.new;
 		state = \waitingForCommand;
 		parseFunctions = (
 			waitingForCommand: {arg byte;
@@ -107,6 +108,19 @@ FirmataParser {
 		);
 	}
 
+	//Functions are added to a FIFO
+	addResponseFunction{arg key, func;
+		responseFunctions.atFail(key.asSymbol, {
+			responseFunctions.put(key.asSymbol, Array.new);
+			responseFunctions.at(key.asSymbol);
+		}).addFirst(func);
+	}
+
+	doResponseFunction{arg key ...args;
+		var funcs;
+		responseFunctions.at(key.asSymbol).pop.value(*args);
+	}
+
 	reset{
 		commandData = Int8Array.new(32);//max number of data bytes for Firmata is 32 for non-sysex commands
 		state = \waitingForCommand;
@@ -114,7 +128,6 @@ FirmataParser {
 
 	parseByte{arg byte;
 		var nextState;
-		//"GOT: % HEX: % ASCII: %\n".postf(byte, byte.asHexString(2), byte.asAscii);
 		parseFunctions.at(state).value(byte);
 	}
 
@@ -154,11 +167,20 @@ FirmataParser {
 					});
 					result;
 				});
-				"Firmata device capability:".postln;
 				device.prSetPinCapabilities(capabilityData);
 			},
+			Firmata2.pinStateResponse, {
+				var pinStateData;
+				pinStateData = [
+					sysexData[1], //num
+					Firmata2.pinMode.findKeyForValue(sysexData[2]), //mode
+					sysexData[3..].collect({arg byte, i; byte.bitAnd(127) << (7 * i)}).sum //state
+				];
+				"Pin state: %".format(pinStateData).postln;
+				this.doResponseFunction(Firmata2.pinStateResponse, *pinStateData);
+			},
 			{
-				"Unknown Sysex command received: %".format(this.parse14BitData(sysexData)).postln;
+				"Unknown sysex command received: %".format(this.parse14BitData(sysexData)).postln;
 			}
 		);
 	}
@@ -233,13 +255,27 @@ FirmataDevice {
 	requestProtocolVersion{ port.put(Firmata2.protocolVersion); }
 	doSystemReset{ port.put(Firmata2.systemReset); }
 	queryCapability{ this.prSendSysexData(Firmata2.capabilityQuery); }
+
+	queryPinState{arg pinNum, responseFunc;
+		responseFunc !? { parser.addResponseFunction(Firmata2.pinStateResponse, responseFunc); };
+		this.prSendSysexData(Int8Array[Firmata2.pinStateQuery, pinNum]);
+	}
+
+	queryAllPinStates{arg responseFunc;
+		if(pinCapabilities.isNil,
+			{ "No capability data exists for device. Query capability data first.".warn; ^this },
+			{ ^pinCapabilities.size.do({arg i;
+				this.queryPinState(i, responseFunc.copy);
+			}); }
+		)
+	}
+
 	numberOfPins{
 		if(pinCapabilities.isNil,
 			{ "No capability data exists for device. Query capability data first.".warn; ^this },
 			{ ^pinCapabilities.size; }
 		)
 	}
-
 
 	prSendSysexData{arg data;
 		var message;

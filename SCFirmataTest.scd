@@ -75,6 +75,5 @@ Routine({
 }).play;
 )
 
-
 //Test using firmware: EchoString.ino
 a.sendRawString("Kjempebra!");//Replies with the same string
